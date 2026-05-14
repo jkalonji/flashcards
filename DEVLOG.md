@@ -1,12 +1,12 @@
-# Flashcards Bot — État des lieux (14 mai 2026)
+# Flashcards Bot — État des lieux (15 mai 2026)
 
 ## Objectif du projet
 
 Système de flashcards personnelles basé sur la répétition espacée (algorithme SM-2 / style Anki), avec :
 - Envoi automatique des cartes via **Telegram**
 - Stockage des cartes sur **Google Drive** (fichier `flashcards.json` dans un dossier "Flashcards")
-- Import des cartes depuis **NotebookLM** (source initiale)
-- **Phase 2 (non commencée)** : génération automatique de cartes depuis n'importe quel contenu consulté (YouTube, PDF, articles web)
+- Génération automatique de cartes depuis du contenu consulté (YouTube, PDF, fichiers texte) via **Groq AI**
+- Déploiement sans serveur via **GitHub Actions** (session quotidienne de 1h à 13h30)
 
 ---
 
@@ -14,12 +14,16 @@ Système de flashcards personnelles basé sur la répétition espacée (algorith
 
 ```
 Flash_cards_automatiques/
+├── .github/
+│   └── workflows/
+│       └── daily_notify.yml  # GitHub Actions : notif + bot 1h à 13h30
 ├── bot/
 │   ├── main.py               # Bot Telegram principal
 │   ├── sm2.py                # Algorithme SM-2
 │   ├── drive_sync.py         # Lecture/écriture Google Drive
-│   ├── fetch_notebooklm.py   # Script Playwright pour importer depuis NotebookLM
-│   ├── chrome_profile/       # Profil Chromium persistant (connexion Google conservée)
+│   ├── ingest.py             # Extraction de contenu (YouTube, Drive PDF/TXT)
+│   ├── groq_gen.py           # Génération de flashcards via Groq API
+│   ├── notify.py             # Script autonome de notification Telegram
 │   ├── requirements.txt
 │   ├── credentials.json      # Credentials Google Cloud OAuth (ne pas committer)
 │   └── token.json            # Token OAuth auto-généré (ne pas committer)
@@ -29,11 +33,13 @@ Flash_cards_automatiques/
 ```
 
 ### Stack technique
-- **Python 3.14** (Windows 11)
+- **Python 3.14** (Windows 11) / **Python 3.12** (GitHub Actions)
 - `python-telegram-bot==22.7` — bot Telegram (long polling)
-- `APScheduler==3.10.4` — sessions automatiques à 8h et 20h
+- `APScheduler==3.10.4` — sessions automatiques à 8h et 20h (inactif en prod GitHub Actions)
 - `google-api-python-client` + `google-auth-oauthlib` — Google Drive API
-- `playwright` — scraping NotebookLM (navigateur headless avec profil persistant)
+- `groq` — génération de flashcards via LLM (llama-3.3-70b-versatile)
+- `youtube-transcript-api==1.x` — extraction de transcripts YouTube
+- `PyMuPDF` — extraction de texte depuis des PDFs
 
 ---
 
@@ -67,6 +73,7 @@ Flash_cards_automatiques/
 | `/review` | Lance une session manuelle (cartes dues selon SM-2) |
 | `/stats` | Statistiques (total, dues aujourd'hui, matures >21j) |
 | `/add` | Ajout manuel d'une carte (conversation multi-étapes) |
+| `/ingest` | Génère des cartes depuis une URL (YouTube ou Google Drive PDF/TXT) |
 
 **Session automatique (scheduler)** : à 8h et 20h, le bot envoie les cartes dont `next_review <= aujourd'hui`.
 
@@ -98,6 +105,7 @@ Implémenté dans `sm2.py`. Ratings mappés sur l'échelle 0–5 de SM-2 :
 TELEGRAM_TOKEN=<token @BotFather>
 TELEGRAM_USER_ID=<ID numérique Telegram>
 TIMEZONE=Europe/Brussels
+GROQ_API_KEY=<clé API Groq — console.groq.com>
 ```
 
 ### Google Cloud
@@ -112,7 +120,6 @@ TIMEZONE=Europe/Brussels
 ```powershell
 cd bot
 pip install -r requirements.txt
-python -m playwright install chromium
 python main.py
 ```
 
@@ -145,73 +152,54 @@ flowName=GeneralOAuthFlow
 
 ---
 
-### 3. Impossible d'accéder aux flashcards NotebookLM
+### 3. Import NotebookLM — abandonné
 
-**Problème :** Le lien de partage NotebookLM (`utm_source=nlm_web_share`) redirige vers une page de connexion Google. Même les liens "partagés" via l'interface nécessitent un compte Google connecté.
+**Problème initial :** Le lien de partage NotebookLM redirige vers une page de connexion Google. Même les liens "partagés" nécessitent un compte Google connecté, rendant l'automatisation complexe.
 
-**Tentatives :**
-- `WebFetch` depuis Claude Code → redirige vers `accounts.google.com/ServiceLogin` (302)
-- `copy(document.body.innerText)` dans la console navigateur → capture le texte du chat NotebookLM, pas celui de l'artifact de flashcards
-- Export "Save to Drive" → non disponible pour ce type d'artifact dans l'interface NotebookLM
+**Tentatives infructueuses :**
+- `WebFetch` → redirige vers `accounts.google.com/ServiceLogin` (302)
+- `copy(document.body.innerText)` dans la console → capture le chat, pas l'artifact de flashcards
+- Export "Save to Drive" → non disponible pour ce type d'artifact
 
-**Solution retenue :** Script `fetch_notebooklm.py` avec **Playwright** et un profil Chromium persistant. Le script :
-1. Ouvre un navigateur avec le profil Google conservé (connexion unique)
-2. Navigue vers l'URL de l'artifact
-3. Essaie une liste de sélecteurs CSS pour trouver le conteneur de l'artifact
-4. Sauvegarde le contenu brut dans `raw_content.txt` (fallback si parsing échoue)
-5. Parse les flashcards (patterns Q/R, Front/Back, numérotés) et les importe dans Drive
-
-**État actuel :** Script écrit mais pas encore exécuté avec succès (en attente de test).
+**Décision (15 mai 2026) :** NotebookLM abandonné comme source. Remplacé par une approche plus directe et robuste : `/ingest` avec Groq AI sur des liens YouTube et fichiers Google Drive (PDF, TXT). Playwright et `chrome_profile/` supprimés du projet.
 
 ---
 
-### 4. Commande `playwright` non trouvée
+### 4. `youtube-transcript-api` v1.x — API breaking change
 
 **Erreur :**
 ```
-'playwright' n'est pas reconnu en tant que commande interne ou externe
+type object 'YouTubeTranscriptApi' has no attribute 'get_transcript'
 ```
-**Cause :** Playwright installé dans `%APPDATA%\Python\Python314\Scripts` qui n'est pas dans le PATH Windows.  
-**Fix :** Utiliser `python -m playwright install chromium` au lieu de `playwright install chromium`.
+**Cause :** La v1.x a remplacé le classmethod `get_transcript()` par une API instance-based.  
+**Fix :** Instancier la classe et utiliser `.fetch()` :
+```python
+api = YouTubeTranscriptApi()
+transcript = api.fetch(video_id, languages=["fr", "en"])
+text = " ".join(snippet.text for snippet in transcript)
+```
 
 ---
 
-## État actuel (14 mai 2026)
+## État actuel (15 mai 2026)
 
 | Composant | État |
 |-----------|------|
 | Bot Telegram (`main.py`) | ✅ Opérationnel |
-| Scheduler 8h/20h | ✅ Actif |
 | Google Drive sync | ✅ Authentifié |
-| SM-2 algorithm | ✅ Implémenté |
-| Import NotebookLM | ⏳ Script écrit, test en cours |
-| Cartes dans Drive | ❌ 0 cartes (import pas encore complété) |
-| Phase 2 (auto-génération) | ❌ Non commencée |
+| SM-2 algorithm | ✅ Implémenté (bug d'affichage de l'intervalle à corriger) |
+| `/ingest` YouTube | ✅ Testé et fonctionnel |
+| `/ingest` Drive (PDF/TXT) | ✅ Implémenté, non testé |
+| Notification quotidienne (GitHub Actions) | ✅ Opérationnelle |
+| Session bot 1h/jour (GitHub Actions) | ✅ Opérationnelle |
+| Import NotebookLM | ❌ Abandonné |
+| Scheduler 8h/20h | ⚠️ Inactif en prod (GitHub Actions, fenêtre 1h à 13h30) |
 
 ---
 
 ## Prochaines étapes
 
-### Immédiat
-1. Finaliser l'import des cartes NotebookLM via `fetch_notebooklm.py`
-   - Si le parsing auto échoue : analyser `raw_content.txt` et ajuster le parser
-   - Vérifier que les cartes apparaissent dans Drive → `Flashcards/flashcards.json`
-   - Tester `/review` dans Telegram
-
-### Phase 2 — Génération automatique de cartes
-Ajouter une commande `/ingest <url>` dans le bot qui :
-1. Reçoit une URL (YouTube, article, PDF Google Drive)
-2. Extrait le contenu (transcript YouTube via `youtube-transcript-api`, article via `trafilatura`, PDF via `PyMuPDF`)
-3. Appelle l'API Claude (`claude-sonnet-4-6`) avec un prompt de génération de flashcards
-4. Ajoute les cartes générées dans Drive
-5. Confirme à l'utilisateur
-
-**Dépendances à ajouter :** `anthropic`, `youtube-transcript-api`, `trafilatura`, `PyMuPDF`
-
-### Déploiement (optionnel)
-Le bot tourne actuellement en local (doit rester allumé). Pour le rendre permanent :
-- **Option simple** : Windows Task Scheduler → lance `python main.py` au démarrage
-- **Option cloud** : déployer sur un VPS (Railway, Render, Oracle Free Tier) avec un `Dockerfile`
+Voir section **TO BE DONE** ci-dessous.
 
 ---
 
