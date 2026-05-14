@@ -1,15 +1,19 @@
-name: Daily flashcard notification
+name: Daily flashcard session
 
 on:
   schedule:
     # 13h30 Europe/Brussels en été (CEST = UTC+2)
     # Changer en "30 12 * * *" en hiver (CET = UTC+1)
     - cron: '30 11 * * *'
-  workflow_dispatch: # Permet de tester manuellement depuis l'onglet Actions
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  notify:
+  session:
     runs-on: ubuntu-latest
+    timeout-minutes: 75
 
     steps:
       - name: Checkout
@@ -21,12 +25,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: |
-          pip install \
-            google-auth \
-            google-auth-oauthlib \
-            google-api-python-client \
-            requests
+        run: pip install -r bot/requirements.txt
 
       - name: Write Google token
         env:
@@ -38,3 +37,10 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_USER_ID: ${{ secrets.TELEGRAM_USER_ID }}
         run: python bot/notify.py
+
+      - name: Run bot (1 heure)
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_USER_ID: ${{ secrets.TELEGRAM_USER_ID }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: timeout 3600 python bot/main.py || true
