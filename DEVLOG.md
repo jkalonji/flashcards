@@ -212,3 +212,29 @@ Ajouter une commande `/ingest <url>` dans le bot qui :
 Le bot tourne actuellement en local (doit rester allumé). Pour le rendre permanent :
 - **Option simple** : Windows Task Scheduler → lance `python main.py` au démarrage
 - **Option cloud** : déployer sur un VPS (Railway, Render, Oracle Free Tier) avec un `Dockerfile`
+
+---
+
+## TO BE DONE
+
+### 1. Ingestion multi-sources depuis Drive
+
+Permettre de déposer plusieurs fichiers (PDF, TXT, YouTube URLs) dans un dossier Drive dédié, et que le système les ingère automatiquement pour générer des cartes issues de sources variées.
+
+**Question ouverte :** faut-il mélanger les cartes de sources différentes lors des sessions `/review`, ou les regrouper par sujet/source ? Les deux approches ont des mérites :
+- **Mélangé** : meilleure rétention inter-domaines, simule un environnement d'examen réel
+- **Par sujet** : plus cohérent pour des apprentissages structurés en séquence
+
+---
+
+### 2. Correction de l'algorithme SM-2 (bug critique)
+
+**Problème constaté :** quelle que soit la réponse donnée (Raté / Difficile / Bien / Facile), le bot répond toujours "prochaine révision dans 1 jour(s)". L'intervalle n'est pas dynamique.
+
+**Comportement attendu :**
+- ❌ **Raté** → retente demain (1 jour)
+- 😅 **Difficile** → retente dans quelques jours
+- 👍 **Bien** → intervalle croissant selon SM-2 (ex. 4 jours → 10 jours → 25 jours…)
+- ✅ **Facile** → intervalle long d'emblée (ex. 3 semaines)
+
+Le processus doit être dynamique et cumulatif : plus une carte est bien connue, moins elle revient souvent, pour maximiser la rétention à long terme.
