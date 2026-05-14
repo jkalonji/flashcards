@@ -1,0 +1,25 @@
+# Variables d'environnement
+.env
+
+# Credentials Google OAuth
+bot/credentials.json
+bot/token.json
+
+# Profil Chromium (plus utilisé)
+bot/chrome_profile/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Claude Code
+.claude/
+
+# Divers
+*.log
+.DS_Store
+bot/raw_content.txt
+bot/screenshot_notebooklm.png
